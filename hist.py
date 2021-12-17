@@ -78,7 +78,7 @@ class Printer:
             print('\t'.join(map(str, fields)))
 
 
-def parse_args():
+def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cmd',
                         nargs='?',
@@ -151,7 +151,7 @@ def parse_args():
         action="store_true",
         help='Import history from stdin in Unix timestamp + tab + cmd format'
         '(HISTTIMEFORMAT="%%s%%t" history | hist.py --import)')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.all:
         args.n = 0
     if args.session == '.':
@@ -215,10 +215,10 @@ def insert_hist(conn, fh, session='', pwd='', elapsed=0):
 
 def import_hist(conn, args):
     with conn:
-        create_table(conn)
         session = args.session or ''
         pwd = args.dir or ''
         elapsed = args.elapsed or 0
+        create_table(conn)
         insert_hist(conn, sys.stdin, session, pwd, elapsed)
 
 
