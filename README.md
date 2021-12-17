@@ -94,10 +94,20 @@ HISTTIMEFORMAT="%s%t" history | hist.py
 
 ## Bugs
 
-The timestamps have 1-second resolution; if you run the same command twice
-within the same second on the same directory, hostname, shell session, with the
-same elapsed time and exit status, it will be inserted into the database only
-once.
+Timestamps have 1-second resolution; if you run the same command twice within
+the same second on the same directory, hostname, shell session, with the same
+elapsed time and exit status, it will be inserted into the database only once.
+
+If you use the edit-and-execute-command readline binding in bash (C-xC-e by
+default) to run commands in multiple lines, all of them will end up with the
+same metadata, other than the timestamp. For example, if your edited command is
+
+    sleep 1
+    sleep 2
+    false
+
+all three commands will be recorded with an elapsed time of 3 seconds and exit
+status 1.
 
 ## Similar projects
 

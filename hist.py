@@ -45,17 +45,29 @@ COLS = {
 }
 DEFAULT_FMT = 'thsdec'
 
-PY2 = sys.version_info.major < 3
+TABLE_NAME = 'hist'
 
-INSERT = 'INSERT OR IGNORE INTO hist ({}) VALUES ({})'.format(
-    ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
+INSERT = 'INSERT OR IGNORE INTO {} ({}) VALUES ({})'.format(
+    TABLE_NAME, ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
 
 HOME = os.path.expanduser('~')
 
+PY2 = sys.version_info.major < 3
+
 
 class HistFormatter:
+    """
+    Stateful history output formatter. Remembers the date of the last command
+    that was printed, to enable grouping the output by date.
+    """
 
     def __init__(self, fmt, group=False):
+        """
+        :param fmt: string describing which columns to format. See `COLS` module
+                    variable for valid fields.
+        :param group: if true, output each date only once, only output the time
+                      in each timestamp, and indent each non-date row.
+        """
         self.prev_date = None
         self.group = group
         self.field_getters = []
@@ -73,6 +85,12 @@ class HistFormatter:
             self.field_getters.append(getter)
 
     def format(self, entry):
+        """
+        Format an Entry. The output may span multiple lines, which are yielded
+        separately.
+
+        :yield: lines to print (newline not included).
+        """
         ts = entry.timestamp
         date = ts.date().isoformat()
         if date != self.prev_date:
@@ -93,7 +111,7 @@ class HistFormatter:
 
 def contractuser(dirname):
     """
-    Opposite of os.path.expanduser().
+    Opposite of os.path.expanduser() (e.g., turn /home/$USER/test into ~/test).
     """
     if dirname.startswith(HOME):
         return '~' + dirname[len(HOME):]
@@ -101,24 +119,30 @@ def contractuser(dirname):
 
 def create_table(conn):
     """
-    Create the `hist` database table, but if it doesn't exist already.
+    Create the database table, but if it doesn't exist already.
     """
     cols = []
     for field in FIELDS[1:]:
         ftype = 'INTEGER' if field in INT_FIELDS else 'TEXT'
         cols.append('{} {} '.format(field, ftype))
     conn.execute(
-        'CREATE TABLE IF NOT EXISTS hist (id TEXT PRIMARY KEY, {})'.format(
-            ', '.join(cols)))
-    conn.execute('CREATE INDEX IF NOT EXISTS ts_idx ON hist (timestamp DESC)')
-    conn.execute('CREATE INDEX IF NOT EXISTS cmd_idx ON hist (cmd)')
-    conn.execute('CREATE INDEX IF NOT EXISTS session_idx ON hist (session)')
+        'CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, {})'.format(
+            TABLE_NAME, ', '.join(cols)))
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS ts_idx ON {} (timestamp DESC)'.format(
+            TABLE_NAME))
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS cmd_idx ON {} (cmd)'.format(TABLE_NAME))
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS session_idx ON {} (session)'.format(
+            TABLE_NAME))
 
 
 def parse_bash_history(fh):
     """
-    Parse the output of `HISTTIMEFORMAT="%s%t" history`, yielding
-    (timestamp, cmd, idx) tuples.
+    Generator that parses the output of `HISTTIMEFORMAT="%s%t" history`.
+
+    :yield: (timestamp, cmd, idx) as (int, str, int) tuples.
     """
     prev_idx = -1
     idx = 0
@@ -131,7 +155,8 @@ def parse_bash_history(fh):
             if idx == prev_idx + 1:
                 if PY2:
                     cmd = cmd.decode('utf8')
-                yield timestamp, cmd, prev_idx
+                if cmd:
+                    yield timestamp, cmd, prev_idx
             prev_idx = idx
             timestamp = int(m.group(2))
             cmd = m.group(3)
@@ -140,10 +165,23 @@ def parse_bash_history(fh):
     if idx > 0:
         if PY2:
             cmd = cmd.decode('utf8')
-        yield timestamp, cmd, prev_idx
+        if cmd:
+            yield timestamp, cmd, prev_idx
 
 
 def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
+    """
+    Insert history from a file-like object. The input should be formatted like
+    the output of `HISTTIMEFORMAT="%s%t" history`, which provides timestamp,
+    command, and index; the rest of the fields are provided by the keyword
+    arguments and will apply to every entry being inserted.
+
+    Note that entries already in the database (as defined by all the fields
+    other than idx, which is volatile) won't be inserted again. (Bug: because of
+    this, two commands run within the same second on the same directory,
+    hostname, shell session, with the same elapsed time and exit status, will be
+    inserted into the database only once.)
+    """
     for timestamp, cmd, idx in parse_bash_history(fh):
         row = (session, pwd, timestamp, elapsed, cmd, hostname, status)
         row_str = b'\t'.join(str(f).encode('utf8') for f in row)
@@ -153,7 +191,7 @@ def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
 
 def to_int(s):
     """
-    Convert string to int or 0 if invalid.
+    Convert string to int, or 0 if invalid.
     """
     try:
         return int(s)
@@ -162,6 +200,14 @@ def to_int(s):
 
 
 def import_hist(conn, args):
+    """
+    Import history from stdin. The input should be formatted like the output of
+    `HISTTIMEFORMAT="%s%t" history`, which provides timestamp, command, and
+    index; the rest of the fields come from command-line arguments and apply to
+    every entry being inserted.
+
+    See insert_hist for more information.
+    """
     with conn:
         session = args.session or ''
         pwd = args.dir or ''
@@ -177,7 +223,8 @@ def parse_int_expr(expr):
     Parse a string consisting of an int optionally preceded by a relational
     operator.
 
-    :return: (operator, int_value). Both will be None if the string is invalid.
+    :return: (operator, value). Both will be None if the string is invalid.
+    :rtype: (str, int) or (NoneType, NoneType)
     """
     try:
         val = int(expr)
@@ -193,8 +240,13 @@ def parse_int_expr(expr):
 
 
 def query(conn, args):
+    """
+    Query the database using the given command-line arguments and yield the
+    matching entries.
+
+    :return: generator of Entry.
+    """
     select = 'SELECT {} FROM'.format(','.join(FIELDS))
-    table = 'hist'
     wheres = []
     bindings = []
     if args.session:
@@ -226,11 +278,11 @@ def query(conn, args):
     order = 'ORDER BY timestamp DESC, idx DESC'
     limit = 'LIMIT {}'.format(args.n) if args.n > 0 else ''
     group = 'GROUP BY cmd' if args.dedup else ''
-    sql = ' '.join([select, table, where, group, order, limit])
+    sql = ' '.join([select, TABLE_NAME, where, group, order, limit])
     if args.chronological:
         sql = ' '.join(
             [select, '(', sql, ')', 'ORDER BY timestamp ASC, idx ASC'])
-    #print(sql)
+
     for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname, status,
          idx) in conn.execute(sql, bindings):
         timestamp = datetime.datetime.fromtimestamp(int(timestamp_str))
@@ -238,7 +290,10 @@ def query(conn, args):
                     status, idx)
 
 
-def do_query(conn, args):
+def query_and_print(conn, args):
+    """
+    Query the database and print out the results.
+    """
     formatter = HistFormatter(args.fmt, args.group)
 
     hist = query(conn, args)
@@ -248,23 +303,46 @@ def do_query(conn, args):
 
 
 def send(fh, msg):
+    """
+    Send a JSON-encoded message to the given file object.
+    """
     json.dump(msg, fh)
     fh.write('\n')
     fh.flush()
 
 
 def recv(fh):
+    """
+    Receive a JSON-encoded message from the given file object.
+    """
     s = fh.readline()
     return json.loads(s)
 
 
 def get_host_timestamps(conn):
-    sql = 'SELECT hostname, MAX(timestamp) FROM hist GROUP BY hostname'
+    """
+    Get a dictionary with the most recent timestamp for each host in the
+    database.
+
+    :return: {hostname: timestamp}
+    :rtype: {str: int}
+    """
+    sql = 'SELECT hostname, MAX(timestamp) FROM {} GROUP BY hostname'.format(
+        TABLE_NAME)
     with conn:
         return dict(conn.execute(sql))
 
 
 def sync(conn, args):
+    """
+    Synchronize the local database with a remote database. This is a two-step
+    process:
+    1) Fetch from the remote database all the entries that are newer than the
+       newest entry we have for each hostname.
+    2) Push to the remote database all the entries that are newer than the
+       newest entry that the remote database has for each hostname.
+    """
+    # Parse args.sync argument to decide if it's a remote host or not.
     if ':' in args.sync:
         hostname, histfile = args.sync.split(':', 1)
     elif os.path.isfile(args.sync):
@@ -273,6 +351,8 @@ def sync(conn, args):
     else:
         hostname = args.sync
         histfile = None
+
+    # Start subprocess to connect to server process.
     cmd = ['hist.py', '--serve']
     if histfile:
         cmd += ['--histfile', histfile]
@@ -286,14 +366,17 @@ def sync(conn, args):
     inp = p.stdout
     out = p.stdin
 
+    # Start the dialog with the server process.
     msg = recv(inp)
     assert msg == 'READY'
+
+    # 1) Get new entries from remote.
     local_timestamps = get_host_timestamps(conn)
     print("Requesting entries newer than", local_timestamps, file=sys.stderr)
-
     send(out, ["PULL", local_timestamps])
     recv_entries(conn, inp)
 
+    # 2) Send new entries to remote.
     send(out, ["GET_TIMESTAMPS", None])
     remote_timestamps = recv(inp)
     print('Sending entries newer than', remote_timestamps, file=sys.stderr)
@@ -307,7 +390,17 @@ def sync(conn, args):
 
 
 def get_newer_entries(conn, timestamps):
-    select = 'SELECT {} FROM hist'.format(','.join(FIELDS))
+    """
+    Generator of entries for each host that are newer than the timestamp
+    specified in the timestamps dict (if a host is not in the dict, all of its
+    entries are yielded).
+
+    :param timestamps: {hostname: timestamp}
+    :type timestamp: {str: int}
+
+    :yield: newer history entry tuples for insertion into database
+    """
+    select = 'SELECT {} FROM {}'.format(TABLE_NAME, ','.join(FIELDS))
     wheres = []
     bindings = []
     for hostname, timestamp in timestamps.items():
@@ -322,6 +415,10 @@ def get_newer_entries(conn, timestamps):
 
 
 def send_entries(conn, out, timestamps):
+    """
+    Send a list of entries sandwiched between a BEGIN message and
+    an END message. Each row is a tuple with the values to insert.
+    """
     send(out, 'BEGIN')
     for row in get_newer_entries(conn, timestamps):
         send(out, row)
@@ -329,6 +426,10 @@ def send_entries(conn, out, timestamps):
 
 
 def recv_entries(conn, inp):
+    """
+    Receive a list of entries sandwiched between a BEGIN message and
+    an END message. Each row is a tuple with the values to insert.
+    """
     msg = recv(inp)
     assert msg == 'BEGIN'
     n = 0
@@ -343,10 +444,15 @@ def recv_entries(conn, inp):
 
 
 def serve(conn, args):
+    """
+    Act as the server for syncrhonization purposes. Receive requests from
+    stdin and respond on stdout.
+    """
     out = sys.stdout
     inp = sys.stdin
     send(out, 'READY')
     while True:
+        # Requests must be a (command, message) pair.
         cmd, msg = recv(inp)
         if cmd == 'BYE':
             break
@@ -358,6 +464,7 @@ def serve(conn, args):
         elif cmd == 'PUSH':
             recv_entries(conn, inp)
         else:
+            # Reply in the great ed tradition.
             send(out, '?')
 
 
@@ -474,6 +581,9 @@ def parse_args(argv=None):
 
 
 def quiet_handler(signum, frame):
+    """
+    Signal handler for exiting quietly.
+    """
     sys.exit()
 
 
@@ -494,7 +604,7 @@ def main():
     elif args.import_hist:
         action = import_hist
     else:
-        action = do_query
+        action = query_and_print
 
     try:
         action(conn, args)
