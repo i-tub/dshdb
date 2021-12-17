@@ -21,7 +21,9 @@ import sqlite3
 import subprocess
 import sys
 
-DEFAULT_HISTFILE = '~/.hist.db'
+DEFAULT_HISTFILE = os.path.join(os.environ.get('HIST_DIR', '~/.hist'),
+                                'hist.db')
+
 FIELDS = [
     'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname', 'status',
     'idx'
@@ -131,8 +133,8 @@ def create_table(conn):
     conn.execute(
         'CREATE INDEX IF NOT EXISTS {0}_ts_idx ON {0} (timestamp DESC)'.format(
             TABLE_NAME))
-    conn.execute(
-        'CREATE INDEX IF NOT EXISTS {0}_cmd_idx ON {0} (cmd)'.format(TABLE_NAME))
+    conn.execute('CREATE INDEX IF NOT EXISTS {0}_cmd_idx ON {0} (cmd)'.format(
+        TABLE_NAME))
     conn.execute(
         'CREATE INDEX IF NOT EXISTS {0}_session_idx ON {0} (session)'.format(
             TABLE_NAME))

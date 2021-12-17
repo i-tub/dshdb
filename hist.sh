@@ -7,6 +7,15 @@
 #
 # For more information and updates, see https://github.com/i-tub/dshdb .
 
+# Set HIST_DIR to directory containing this script, unless already defined.
+export HIST_DIR="${HIST_DIR:-${BASH_SOURCE%/*}}"
+
+# Prepend HIST_DIR to PATH unless already there.
+case ":$PATH:" in
+    *":$HIST_DIR:"*) ;;
+    *) export PATH="$HIST_DIR:$PATH" ;;
+esac
+
 export HIST_SESSION_ID=$(python -c 'import sys; sys.path.pop(0); import uuid; print uuid.uuid4().hex[:16]')
 
 __hist_in_cmd=0

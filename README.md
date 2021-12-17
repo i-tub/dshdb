@@ -1,39 +1,42 @@
 # Distributed shell history database
 
 Have you ever asked yourself "how did I run that obscure command with a
-bajillion argument 5 years ago, and where?" And wished that the incantation
+bajillion arguments 5 years ago, and where?" And wished that the incantation
 had been preserved in your shell history?
 
 While you can configure bash to keep a very long history, there are still some
 caveats, namely the lack of concept of session and the lack of working
 directory information. If you have more than one shell open, history can get
-confusing. And if you work on multiple hosts, even more so.
+confusing. And if you work on multiple hosts, even more so. Finally, bash
+history files are surprisingly easy to clobber by accident.
 
 The Distributed Shell History Database, dshdb, keeps your history forever in an
 sqlite database; preserves metadata such as session, CWD, hostname, elapsed
 time, and exit status; makes searching the database easy; and finally, makes it
 easy to synchronize the databases between multiple hosts.
 
-It is written for Python 2 (while supporting Python 3), because unfortunately
-many Linux distributions still in use don't have Python 3 out of the box, and I
-wanted to minimize dependencies. Hooks for bash are provided, but I think it
-should be easy to get it to work for zsh.
+It is written for Python 2 and 3, since many Linux distributions still in use
+only have Python 2 by default. Hooks for bash are provided; I think it's not
+too difficult to adapt them to zsh, but I don't use zsh. If you get it working,
+please send it along!
 
 ## Installation
 
-First, put hist.py anywhere on your path and make sure it's executable; add
-hist.sh wherever you like (suggested place: ~/.hist.sh).
+First, install [Bash-Preexec](https://github.com/rcaloras/bash-preexec). This
+is the only dependency (not counting Python and bash!).
 
-Then, for bash, install
-[Bash-Preexec](https://github.com/rcaloras/bash-preexec), and add a line at
-the bottom of your .bashrc to source hist.sh; for example,
+Then, run `make install` to copy the scripts to ~/.hist. You can choose a
+different location by adding `HIST_DIR=<your_location>` when running make. This
+directory will also be the location of the history database file, `hist.db`.
+
+Finally, add a line at the bottom of your .bashrc to source hist.sh; for
+example, if you used the default location,
 
 ```
-. ~/.hist.sh
+. ~/.hist/hist.sh
 ```
 
-If you want, you can also define a more conventient alias. I have `alias
-hi=hist.py`.
+Optional: define a more convenient alias. I have `alias hi=hist.py`.
 
 ## Examples
 
