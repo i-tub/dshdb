@@ -258,8 +258,22 @@ def query(conn, args):
         wheres.append('pwd LIKE ?')
         bindings.append(args.dir)
     if args.cmd:
-        wheres.append('cmd LIKE ?')
-        cmd = args.cmd if args.exact else '%{}%'.format(args.cmd)
+        if args.like:
+            op = 'LIKE'
+            wildcard = '%'
+        elif args.regex:
+            op = 'REGEXP'
+            wildcard = '.*'
+        elif args.eq:
+            op = '=='
+            wildcard = ''
+        else:
+            op = 'glob'
+            wildcard = '*'
+        wheres.append('cmd {} ?'.format(op))
+        cmd = args.cmd if args.exact else '{1}{0}{1}'.format(args.cmd, wildcard)
+        if args.regex:
+            cmd += '$'
         bindings.append(cmd)
     if args.hostname:
         wheres.append('hostname LIKE ?')
@@ -476,23 +490,24 @@ def parse_args(argv=None):
         formatter_class=argparse.RawDescriptionHelpFormatter)
     query_group = parser.add_argument_group(
         'query options',
-        'In queries, <like> is used with SQL LIKE, where % and _ '
-        'are wildcards.')
+        'In queries, <query> is normally interpreted as a glob, but it may\n'
+        'be interpreted as an SQL LIKE, a Python regex, or a simple string\n'
+        'by using one of the "query control options" below.')
     query_group.add_argument(
         'cmd',
         nargs='?',
         metavar='<cmd>',
         help='Search by command. This is a substring search, unless the '
-        '--exact flag is used. %% and _ are wildcards.')
+        '--exact flag is used.')
     query_group.add_argument(
         '--session',
         '-s',
-        metavar='<like>',
+        metavar='<query>',
         help='Search by session ID. Use "." for current session.')
     query_group.add_argument(
         '--dir',
         '-d',
-        metavar='<like>',
+        metavar='<query>',
         help='Search by directory. Use "." for current working directory.')
     query_group.add_argument(
         '--elapsed',
@@ -506,12 +521,31 @@ def parse_args(argv=None):
         help='Exit status. May use a string with an operator (e.g., "!= 0")')
     query_group.add_argument('--hostname',
                              '-H',
-                             metavar='<like>',
+                             metavar='<query>',
                              help='Search by hostname. Use "." for localhost.')
-    query_group.add_argument('--exact',
-                             '-w',
-                             action='store_true',
-                             help='Use exact match for command')
+
+    query_ctrl_group = parser.add_argument_group('query control options')
+    query_op = query_ctrl_group.add_mutually_exclusive_group()
+    query_op.add_argument(
+        '--regex',
+        '-R',
+        action='store_true',
+        help='Use Pyton regular expressions for matching command.')
+    query_op.add_argument('--like',
+                          '-L',
+                          action='store_true',
+                          help='Use SQL LIKE for matching command.')
+    query_op.add_argument('--eq',
+                          '-E',
+                          action='store_true',
+                          help='Use SQL == for matching command.')
+    query_ctrl_group.add_argument(
+        '--exact',
+        '-w',
+        action='store_true',
+        help='Use "exact" match for command (don\'t surround it with '
+        ' wildcards implicitly for GLOB/LIKE/REGEXP comparisons; '
+        ' but wildcards in <cmd> are still magical).')
 
     fmt_group = parser.add_argument_group('output control')
     fmt_group.add_argument('--all',
@@ -566,7 +600,10 @@ def parse_args(argv=None):
         '--import_hist',
         action="store_true",
         help='Import history from stdin in Unix timestamp + tab + cmd format '
-        '(i.e., HISTTIMEFORMAT="%%s%%t" history | hist.py --import)')
+        '(i.e., HISTTIMEFORMAT="%%s%%t" history | hist.py --import). '
+        'The `history` output only provides timestamp and command; other '
+        'metadata may be supplied with --dir, --elapsed, --session, '
+        '--hostname, and --status, but will apply to every row imported.')
 
     args = parser.parse_args(argv)
     if args.all:
@@ -597,9 +634,10 @@ def main():
 
     args = parse_args()
     histfile = args.histfile or os.path.expanduser(DEFAULT_HISTFILE)
+
+    os.umask(0x077)  # Make sure database file is created private.
     conn = sqlite3.connect(os.path.expanduser(histfile))
-    # Make history private
-    os.chmod(histfile, 0o600)
+    conn.create_function('REGEXP', 2, lambda r, s: bool(re.match(r,s)))
 
     if args.sync:
         action = sync
