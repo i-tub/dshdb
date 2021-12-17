@@ -43,3 +43,11 @@ $ hist.py
 2021-12-07T09:35:02	git log
 ...
 ```
+
+## Bugs
+
+The timestamps have 1-second resolution:
+* If you run the same command twice within the same second at the same
+  directory, hostname, and shell session, it will be inserted into the database
+  only once.
+* The order of commands with the same timestamp is unspecified.

@@ -184,7 +184,7 @@ def read_hist(fh):
     cmd = ''
     timestamp = None
     for line in fh:
-        m = re.match(r'\s*(\d)+\s+(\d+)\t(.*)', line)
+        m = re.match(r'\s*(\d+)\s+(\d+)\t(.*)', line)
         if m:
             idx = int(m.group(1))
             if idx == prev_idx + 1:
@@ -197,6 +197,8 @@ def read_hist(fh):
         else:
             cmd += "\n" + line.rstrip('\n')
     if idx > 0:
+        if PY2:
+            cmd = cmd.decode('utf8')
         yield timestamp, cmd
 
 
