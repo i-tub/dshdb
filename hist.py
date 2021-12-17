@@ -598,6 +598,8 @@ def main():
     args = parse_args()
     histfile = args.histfile or os.path.expanduser(DEFAULT_HISTFILE)
     conn = sqlite3.connect(os.path.expanduser(histfile))
+    # Make history private
+    os.chmod(histfile, 0o600)
 
     if args.sync:
         action = sync
