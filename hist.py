@@ -1,10 +1,15 @@
 #!/bin/env python
 
+"""
+Search or manipulate the distributed shell history database.
+"""
+
 from __future__ import print_function
 
 import argparse
 import collections
 import json
+import operator
 import os
 import re
 import signal
@@ -19,13 +24,31 @@ FIELDS = 'session, pwd, timestamp, elapsed, cmd, hostname'
 
 Entry = collections.namedtuple('Entry', FIELDS)
 
+COLS = {
+    's': 'session',
+    'd': 'pwd',
+    't': 'timestamp',
+    'e': 'elapsed',
+    'c': 'cmd',
+    'h': 'hostname',
+}
 
 class Printer:
 
-    def __init__(self, full, group):
+    def __init__(self, fmt, group):
         self.prev_date = None
-        self.full = full
         self.group = group
+        self.field_getters = []
+
+        for c in fmt or 'thsdec':
+            col = COLS.get(c)
+            if not col:
+                continue
+            elif col == 'timestamp':
+                getter = lambda e: e.timestamp.isoformat()
+            else:
+                getter = operator.attrgetter(col)
+            self.field_getters.append(getter)
 
     def print(self, entry):
         ts = entry.timestamp
@@ -36,13 +59,7 @@ class Printer:
                 print('{}:'.format(date))
         if self.group:
             ts = ts.time()
-        if self.full:
-            fields = [
-                ts.isoformat(), entry.hostname, entry.session, entry.pwd,
-                entry.elapsed, entry.cmd
-            ]
-        else:
-            fields = [ts.isoformat(), entry.cmd]
+        fields = [g(entry) for g in self.field_getters]
         if self.group:
             fields.insert(0, '')
         if sys.version_info[0] < 3:
@@ -53,7 +70,11 @@ class Printer:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('cmd',
+                        nargs='?',
+                        metavar='<like>',
+                        help='Search by command.')
     parser.add_argument(
         '--session',
         '-s',
@@ -64,15 +85,14 @@ def parse_args():
         '-d',
         metavar='<like>',
         help='Search by directory. Use "." for current working directory.')
-    parser.add_argument('--cmd',
-                        '-c',
-                        metavar='<like>',
-                        help='Search by command.')
     parser.add_argument(
-        '--full',
+        '--fmt',
         '-f',
-        action='store_true',
-        help='Full output, including session ID, PWD, and elapsed time.')
+        metavar='<fields>',
+        default='tc',
+        help='Format spec; a string of one-character field identifiers: '
+           't=timestamp, h=hostname, s=session, d=pwd, e=elapsed, c=cmd. '
+           'Default is "%(default)s". Use blank for all.')
     parser.add_argument('--all',
                         '-a',
                         action='store_true',
@@ -104,7 +124,8 @@ def parse_args():
         help='Search by hostname. Use "." for localhost.')
     parser.add_argument('--sync',
                         metavar='<remote>',
-                        help='Sync with remote history.')
+        help='Sync with remote history. <remote> may be a hostname, a '
+        'history database file, or <hostname>:<histfile>.')
     parser.add_argument('--histfile',
                         metavar='<filename>',
                         help='History file to use. Default: '
@@ -143,7 +164,6 @@ def query(conn, args):
     limit = 'LIMIT {}'.format(args.n) if args.n > 0 else ''
     group = 'GROUP BY cmd' if args.dedup else ''
     sql = ' '.join([select, table, where, group, order, limit])
-    #print(sql)
     if args.chronological:
         sql = ' '.join([select, '(', sql, ')', 'ORDER BY timestamp ASC'])
     for session, pwd, timestamp_str, elapsed, cmd, hostname in conn.execute(
@@ -156,10 +176,12 @@ def do_query(conn, args):
     if args.session == '.':
         args.session = os.environ['HIST_SESSION_ID']
     if args.dir == '.':
-        args.dir = os.getcwd()
+        # Use logical $PWD from the shell, rather than physical one
+        # from os.getcwd()
+        args.dir = os.environ['PWD']
     if args.hostname == '.':
         args.hostname = socket.gethostname()
-    printer = Printer(args.full, args.group)
+    printer = Printer(args.fmt, args.group)
 
     hist = query(conn, args)
     for entry in hist:
