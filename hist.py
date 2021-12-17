@@ -20,13 +20,16 @@ import sys
 import datetime as dt
 
 DEFAULT_HISTFILE = '~/.hist.db'
-FIELDS = ['session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname']
-INT_FIELDS = {'timestamp', 'elapsed'}
+FIELDS = [
+    'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname', 'status'
+]
+INT_FIELDS = {'timestamp', 'elapsed', 'status'}
 
 Entry = collections.namedtuple('Entry', FIELDS)
 
 # For use in --fmt argument.
 COLS = {
+    'i': 'id',
     's': 'session',
     'd': '~pwd',
     'D': 'pwd',
@@ -34,6 +37,7 @@ COLS = {
     'e': 'elapsed',
     'c': 'cmd',
     'h': 'hostname',
+    'x': 'status',
 }
 DEFAULT_FMT = 'thsdec'
 
@@ -104,10 +108,12 @@ def parse_args(argv=None):
         '-d',
         metavar='<like>',
         help='Search by directory. Use "." for current working directory.')
-    parser.add_argument('--elapsed',
-                        type=int,
+    parser.add_argument('--elapsed', '-e',
                         metavar='<int>',
-                        help='Elapsed time.')
+        help='Elapsed time. May use a string with an operator (e.g., "> 10")')
+    parser.add_argument('--status', '-x',
+                        metavar='<int>|<op><int>',
+        help='Exit status. May use a string with an operator (e.g., "> 0")')
     parser.add_argument(
         '--fmt',
         '-f',
@@ -212,24 +218,45 @@ def read_hist(fh):
         yield timestamp, cmd
 
 
-def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname=''):
-    INSERT = 'INSERT OR IGNORE INTO hist (id, {}) VALUES (?, {})'.format(
-        ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
+def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
+    #INSERT = 'INSERT OR IGNORE INTO hist (id, {}) VALUES (?, {})'.format(
+        #','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
     for timestamp, cmd in read_hist(fh):
-        row = (session, pwd, timestamp, elapsed, cmd, hostname)
+        row = (session, pwd, timestamp, elapsed, cmd, hostname, status)
         row_str = str(row).encode('utf8')
         rowid = hashlib.md5(row_str).hexdigest()[:16]
         conn.execute(INSERT, (rowid,) + row)
+
+def to_int(s):
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return 0
 
 
 def import_hist(conn, args):
     with conn:
         session = args.session or ''
         pwd = args.dir or ''
-        elapsed = args.elapsed or 0
         hostname = args.hostname or ''
+        elapsed = to_int(args.elapsed)
+        status = to_int(args.status)
         create_table(conn)
-        insert_hist(conn, sys.stdin, session, pwd, elapsed, hostname)
+        insert_hist(conn, sys.stdin, session, pwd, elapsed, hostname, status)
+
+
+def parse_int_expr(expr):
+    try:
+        val = int(expr)
+    except (TypeError, ValueError):
+        pass
+    else:
+        return '==', val
+    m = re.match(r'\s*(=|==|<|<=|>|>=|<>|!=)\s+(\d+)\s*$', expr)
+    if m:
+        return m.group(1), int(m.group(2))
+    else:
+        return None, None
 
 
 def query(conn, args):
@@ -250,6 +277,16 @@ def query(conn, args):
     if args.hostname:
         wheres.append('hostname LIKE ?')
         bindings.append(args.hostname)
+    if args.elapsed is not None:
+        op, val = parse_int_expr(args.elapsed)
+        if op:
+            wheres.append('elapsed ' + op + ' ?')
+            bindings.append(val)
+    if args.status is not None:
+        op, val = parse_int_expr(args.status)
+        if op:
+            wheres.append('status ' + op + ' ?')
+            bindings.append(val)
     where = ''
     if wheres:
         where = 'WHERE ' + ' AND '.join(wheres)
@@ -259,10 +296,12 @@ def query(conn, args):
     sql = ' '.join([select, table, where, group, order, limit])
     if args.chronological:
         sql = ' '.join([select, '(', sql, ')', 'ORDER BY timestamp ASC'])
-    for session, pwd, timestamp_str, elapsed, cmd, hostname in conn.execute(
-            sql, bindings):
+    #print(sql)
+    for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname, status) \
+            in conn.execute(sql, bindings):
         timestamp = dt.datetime.fromtimestamp(int(timestamp_str))
-        yield Entry(session, pwd, timestamp, int(elapsed), cmd, hostname)
+        yield Entry(rowid ,session, pwd, timestamp, int(elapsed), cmd,
+            hostname, status)
 
 
 def do_query(conn, args):

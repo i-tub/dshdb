@@ -15,12 +15,13 @@ function hist_pre_cmd() {
 }
 
 function hist_post_cmd() {
+    local status=$?
     local n=${1:-1}
     if [ "$hist_in_cmd" -eq 1 ]; then
         hist_elapsed=$(($SECONDS - $hist_timestamp))
         HISTTIMEFORMAT='%s%t' history $n | python ~/.hist/hist.py \
         --import_hist --dir "$hist_pwd" --elapsed "$hist_elapsed" \
-        --session . --hostname .
+        --session . --hostname . --status $status
     else
         hist_elapsed=0
     fi
