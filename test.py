@@ -1,5 +1,6 @@
 # coding=utf-8
 import datetime
+import os
 import sqlite3
 import unittest
 
@@ -42,6 +43,34 @@ class TestHist(unittest.TestCase):
         ]
         self.assertEqual(got, expected)
 
+
+class TestHistFormatter(unittest.TestCase):
+
+    def test_one_row(self):
+        testdir = pwd=os.path.expanduser('~/test')
+        entry = hist.Entry(id='d5562323aa17e468',
+                           session='deadbeef',
+                           pwd=testdir,
+                           timestamp=datetime.datetime(2021, 12, 12, 17, 35, 58),
+                           elapsed=3,
+                           cmd='cd hist',
+                           hostname='example.com',
+                           status=0,
+                           idx=42,)
+        tests = [
+            # (fmt, expected)
+            ('d', '~/test'),
+            ('D', testdir),
+            ('t', '2021-12-12T17:35:58'),
+            ('A', ''),
+            ('', '2021-12-12T17:35:58\texample.com\tdeadbeef\t~/test\t3\tcd hist'),
+        ]
+        for fmt, expected in tests:
+            f = hist.HistFormatter(fmt)
+            self.assertEqual(next(f.format(entry)), expected)
+
+    def test_group(self):
+        pass
 
 if __name__ == '__main__':
     unittest.main()

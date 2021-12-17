@@ -9,6 +9,7 @@ from __future__ import print_function
 
 import argparse
 import collections
+import datetime
 import hashlib
 import json
 import operator
@@ -19,13 +20,13 @@ import socket
 import sqlite3
 import subprocess
 import sys
-import datetime as dt
 
 DEFAULT_HISTFILE = '~/.hist.db'
 FIELDS = [
     'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname',
     'status', 'idx'
 ]
+# Fields are TEXT unless listed below.
 INT_FIELDS = {'timestamp', 'elapsed', 'status', 'idx'}
 
 Entry = collections.namedtuple('Entry', FIELDS)
@@ -52,14 +53,9 @@ INSERT = 'INSERT OR IGNORE INTO hist ({}) VALUES ({})'.format(
 HOME = os.path.expanduser('~')
 
 
-def trim_dir(dirname):
-    if dirname.startswith(HOME):
-        return '~' + dirname[len(HOME):]
+class HistFormatter:
 
-
-class Printer:
-
-    def __init__(self, fmt, group):
+    def __init__(self, fmt, group=False):
         self.prev_date = None
         self.group = group
         self.field_getters = []
@@ -71,18 +67,18 @@ class Printer:
             elif col == 'timestamp':
                 getter = lambda e: e.timestamp.isoformat()
             elif col == '~pwd':
-                getter = lambda e: trim_dir(e.pwd)
+                getter = lambda e: contractuser(e.pwd)
             else:
                 getter = operator.attrgetter(col)
             self.field_getters.append(getter)
 
-    def print(self, entry):
+    def format(self, entry):
         ts = entry.timestamp
         date = ts.date().isoformat()
         if date != self.prev_date:
             self.prev_date = date
             if self.group:
-                print('{}:'.format(date))
+                yield '{}:'.format(date)
         if self.group:
             ts = ts.time()
         fields = [g(entry) for g in self.field_getters]
@@ -90,9 +86,17 @@ class Printer:
             fields.insert(0, '')
         if PY2:
             s = '\t'.join(map(unicode, fields))
-            print(s.encode('utf8'))
+            yield s.encode('utf8')
         else:
-            print('\t'.join(map(str, fields)))
+            yield '\t'.join(map(str, fields))
+
+
+def contractuser(dirname):
+    """
+    Opposite of os.path.expanduser().
+    """
+    if dirname.startswith(HOME):
+        return '~' + dirname[len(HOME):]
 
 
 def parse_args(argv=None):
@@ -186,6 +190,9 @@ def parse_args(argv=None):
 
 
 def create_table(conn):
+    """
+    Create the `hist` database table, but if it doesn't exist already.
+    """
     cols = []
     for field in FIELDS[1:]:
         ftype = 'INTEGER' if field in INT_FIELDS else 'TEXT'
@@ -223,14 +230,9 @@ def read_hist(fh):
 
 
 def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
-    #INSERT = 'INSERT OR IGNORE INTO hist (id, {}) VALUES (?, {})'.format(
-        #','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
     for timestamp, cmd, idx in read_hist(fh):
         row = (session, pwd, timestamp, elapsed, cmd, hostname, status)
-        # XXX
-        #row_str = str(row).encode('utf8')
         row_str = b'\t'.join(str(f).encode('utf8') for f in row)
-        #print('---', row_str)
         rowid = hashlib.md5(row_str).hexdigest()[:16]
         conn.execute(INSERT, (rowid,) + row + (idx,))
 
@@ -307,17 +309,18 @@ def query(conn, args):
     #print(sql)
     for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname,
             status, idx) in conn.execute(sql, bindings):
-        timestamp = dt.datetime.fromtimestamp(int(timestamp_str))
+        timestamp = datetime.datetime.fromtimestamp(int(timestamp_str))
         yield Entry(rowid ,session, pwd, timestamp, int(elapsed), cmd,
             hostname, status, idx)
 
 
 def do_query(conn, args):
-    printer = Printer(args.fmt, args.group)
+    formatter = HistFormatter(args.fmt, args.group)
 
     hist = query(conn, args)
     for entry in hist:
-        printer.print(entry)
+        for line in formatter.format(entry):
+            print(line)
 
 
 def send(fh, msg):
