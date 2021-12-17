@@ -28,7 +28,8 @@ Entry = collections.namedtuple('Entry', FIELDS)
 # For use in --fmt argument.
 COLS = {
     's': 'session',
-    'd': 'pwd',
+    'd': '~pwd',
+    'D': 'pwd',
     't': 'timestamp',
     'e': 'elapsed',
     'c': 'cmd',
@@ -40,6 +41,13 @@ PY2 = sys.version_info.major < 3
 
 INSERT = 'INSERT OR IGNORE INTO hist ({}) VALUES ({})'.format(
     ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
+
+HOME = os.path.expanduser('~')
+
+
+def trim_dir(dirname):
+    if dirname.startswith(HOME):
+        return '~' + dirname[len(HOME):]
 
 
 class Printer:
@@ -55,6 +63,8 @@ class Printer:
                 continue
             elif col == 'timestamp':
                 getter = lambda e: e.timestamp.isoformat()
+            elif col == '~pwd':
+                getter = lambda e: trim_dir(e.pwd)
             else:
                 getter = operator.attrgetter(col)
             self.field_getters.append(getter)
@@ -202,8 +212,7 @@ def read_hist(fh):
         yield timestamp, cmd
 
 
-def insert_hist(conn, fh, session='', pwd='', elapsed=0):
-    hostname = socket.gethostname()
+def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname=''):
     INSERT = 'INSERT OR IGNORE INTO hist (id, {}) VALUES (?, {})'.format(
         ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
     for timestamp, cmd in read_hist(fh):
@@ -218,8 +227,9 @@ def import_hist(conn, args):
         session = args.session or ''
         pwd = args.dir or ''
         elapsed = args.elapsed or 0
+        hostname = args.hostname or ''
         create_table(conn)
-        insert_hist(conn, sys.stdin, session, pwd, elapsed)
+        insert_hist(conn, sys.stdin, session, pwd, elapsed, hostname)
 
 
 def query(conn, args):

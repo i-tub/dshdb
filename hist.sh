@@ -19,7 +19,8 @@ function hist_post_cmd() {
     if [ "$hist_in_cmd" -eq 1 ]; then
         hist_elapsed=$(($SECONDS - $hist_timestamp))
         HISTTIMEFORMAT='%s%t' history $n | python ~/.hist/hist.py \
-        --import_hist --dir "$hist_pwd" --elapsed "$hist_elapsed" --session .
+        --import_hist --dir "$hist_pwd" --elapsed "$hist_elapsed" \
+        --session . --hostname .
     else
         hist_elapsed=0
     fi
