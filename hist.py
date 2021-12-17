@@ -220,25 +220,61 @@ def import_hist(conn, args):
         insert_hist(conn, sys.stdin, session, pwd, elapsed, hostname, status)
 
 
-def parse_int_expr(expr):
+def get_int_comparison_term(args, name):
     """
-    Parse a string consisting of an int optionally preceded by a relational
-    operator.
+    Return an SQL WHERE term for the named argument.
 
-    :return: (operator, value). Both will be None if the string is invalid.
-    :rtype: (str, int) or (NoneType, NoneType)
+    :param str name: name of db column / command-line arg
+
+    :return: (sql_term, value).
+    :rtype: (str, int)
+
+    :raises: ValueError if invalid
     """
+    expr = getattr(args, name)
     try:
         val = int(expr)
     except (TypeError, ValueError):
-        pass
+        pass  # Will parse string below
     else:
-        return '==', val
+        return '{} == ?'.format(name), val
     m = re.match(r'\s*(=|==|<|<=|>|>=|<>|!=)\s+(\d+)\s*$', expr)
     if m:
-        return m.group(1), int(m.group(2))
+        return '{} {} ?'.format(name, m.group(1)), int(m.group(2))
     else:
-        return None, None
+        raise ValueError("Invalid int expression" + expr)
+
+
+def get_str_comparison_term(args, db_name, arg_name=None):
+    """
+    Return an SQL WHERE term for the named argument.
+
+    :param str db_name: database column name
+    :param str arg_name: command-line argument name
+
+    :return: (sql_term, value).
+    :rtype: (str, str)
+    """
+    arg_name = arg_name or db_name
+    val = getattr(args, arg_name)
+    eq = getattr(args, '_eq_' + arg_name, False)
+    if eq or args.eq:
+        op = '=='
+        wildcard = ''
+    elif args.like:
+        op = 'LIKE'
+        wildcard = '%'
+    elif args.regex:
+        op = 'REGEXP'
+        wildcard = '.*'
+    else:
+        op = 'glob'
+        wildcard = '*'
+    where = ('{} {} ?'.format(db_name, op))
+    val = val if args.exact else '{1}{0}{1}'.format(val, wildcard)
+    if args.regex:
+        val += '$'
+    return (where, val)
 
 
 def query(conn, args):
@@ -249,48 +285,25 @@ def query(conn, args):
     :return: generator of Entry.
     """
     select = 'SELECT {} FROM'.format(','.join(FIELDS))
-    wheres = []
-    bindings = []
+    wheretups = []
     if args.session:
-        wheres.append('session LIKE ?')
-        bindings.append(args.session)
+        wheretups.append(get_str_comparison_term(args, 'session'))
     if args.dir:
-        wheres.append('pwd LIKE ?')
-        bindings.append(args.dir)
+        wheretups.append(get_str_comparison_term(args, 'pwd', 'dir'))
     if args.cmd:
-        if args.like:
-            op = 'LIKE'
-            wildcard = '%'
-        elif args.regex:
-            op = 'REGEXP'
-            wildcard = '.*'
-        elif args.eq:
-            op = '=='
-            wildcard = ''
-        else:
-            op = 'glob'
-            wildcard = '*'
-        wheres.append('cmd {} ?'.format(op))
-        cmd = args.cmd if args.exact else '{1}{0}{1}'.format(args.cmd, wildcard)
-        if args.regex:
-            cmd += '$'
-        bindings.append(cmd)
+        wheretups.append(get_str_comparison_term(args, 'cmd'))
     if args.hostname:
-        wheres.append('hostname LIKE ?')
-        bindings.append(args.hostname)
+        wheretups.append(get_str_comparison_term(args, 'hostname'))
     if args.elapsed is not None:
-        op, val = parse_int_expr(args.elapsed)
-        if op:
-            wheres.append('elapsed ' + op + ' ?')
-            bindings.append(val)
+        wheretups.append(get_int_comparison_term(args, 'elapsed'))
     if args.status is not None:
-        op, val = parse_int_expr(args.status)
-        if op:
-            wheres.append('status ' + op + ' ?')
-            bindings.append(val)
+        wheretups.append(get_int_comparison_term(args, 'status'))
     where = ''
-    if wheres:
+    if wheretups:
+        wheres, bindings = zip(*wheretups)
         where = 'WHERE ' + ' AND '.join(wheres)
+    else:
+        bindings = []
     order = 'ORDER BY timestamp DESC, idx DESC'
     limit = 'LIMIT {}'.format(args.n) if args.n > 0 else ''
     group = 'GROUP BY cmd' if args.dedup else ''
@@ -606,16 +619,20 @@ def parse_args(argv=None):
         '--hostname, and --status, but will apply to every row imported.')
 
     args = parser.parse_args(argv)
+    args._eq_dir = args._eq_session = args._eq_hostname = False
     if args.all:
         args.n = 0
     if args.session == '.':
         args.session = os.environ['HIST_SESSION_ID']
+        args._eq_session = True
     if args.dir == '.':
         # Use logical $PWD from the shell, rather than physical one
         # from os.getcwd()
         args.dir = os.environ['PWD']
+        args._eq_dir = True
     if args.hostname == '.':
         args.hostname = socket.gethostname()
+        args._eq_hostname = True
     return args
 
 
@@ -637,7 +654,7 @@ def main():
 
     os.umask(0x077)  # Make sure database file is created private.
     conn = sqlite3.connect(os.path.expanduser(histfile))
-    conn.create_function('REGEXP', 2, lambda r, s: bool(re.match(r,s)))
+    conn.create_function('REGEXP', 2, lambda r, s: bool(re.match(r, s)))
 
     if args.sync:
         action = sync
