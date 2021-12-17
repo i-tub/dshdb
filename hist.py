@@ -1,6 +1,6 @@
 #!/bin/env python
 """
-Search or manipulate the distributed shell history database.
+Search or manipulate the Distributed Shell History Database.
 
 For more information and updates, see https://github.com/i-tub/dshdb .
 """
@@ -23,8 +23,8 @@ import sys
 
 DEFAULT_HISTFILE = '~/.hist.db'
 FIELDS = [
-    'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname',
-    'status', 'idx'
+    'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname', 'status',
+    'idx'
 ]
 # Fields are TEXT unless listed below.
 INT_FIELDS = {'timestamp', 'elapsed', 'status', 'idx'}
@@ -33,14 +33,14 @@ Entry = collections.namedtuple('Entry', FIELDS)
 
 # For use in --fmt argument.
 COLS = {
-    'i': 'id',
-    's': 'session',
+    'c': 'cmd',
     'd': '~pwd',
     'D': 'pwd',
-    't': 'timestamp',
     'e': 'elapsed',
-    'c': 'cmd',
     'h': 'hostname',
+    'i': 'id',
+    's': 'session',
+    't': 'timestamp',
     'x': 'status',
 }
 DEFAULT_FMT = 'thsdec'
@@ -99,96 +99,6 @@ def contractuser(dirname):
         return '~' + dirname[len(HOME):]
 
 
-def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('cmd',
-                        nargs='?',
-                        metavar='<like>',
-                        help='Search by command.')
-    parser.add_argument(
-        '--session',
-        '-s',
-        metavar='<like>',
-        help='Search by session ID. Use "." for current session.')
-    parser.add_argument(
-        '--dir',
-        '-d',
-        metavar='<like>',
-        help='Search by directory. Use "." for current working directory.')
-    parser.add_argument('--elapsed', '-e',
-                        metavar='<int>',
-        help='Elapsed time. May use a string with an operator (e.g., "> 10")')
-    parser.add_argument('--status', '-x',
-                        metavar='<int>|<op><int>',
-        help='Exit status. May use a string with an operator (e.g., "> 0")')
-    parser.add_argument(
-        '--fmt',
-        '-f',
-        metavar='<fields>',
-        default='tc',
-        help='Format spec; a string of one-character field identifiers: '
-        't=timestamp, h=hostname, s=session, d=pwd, e=elapsed, c=cmd. '
-        'Default is "%(default)s". Use empty string for all.')
-    parser.add_argument('--all',
-                        '-a',
-                        action='store_true',
-                        help='Return all results.')
-    parser.add_argument('--group',
-                        '-g',
-                        action='store_true',
-                        help='Group results by date.')
-    parser.add_argument(
-        '-n',
-        type=int,
-        metavar='<int>',
-        default=30,
-        help='Number of results to return. Default=%(default)s.')
-    parser.add_argument('--dedup',
-                        '-u',
-                        action='store_true',
-                        help='Deduplicate by command')
-    parser.add_argument('--chronological',
-                        '-r',
-                        action='store_true',
-                        help='Sort output chronologically')
-    parser.add_argument('--exact',
-                        '-w',
-                        action='store_true',
-                        help='Use exact match for command')
-    parser.add_argument('--hostname',
-                        '-H',
-                        metavar='<like>',
-                        help='Search by hostname. Use "." for localhost.')
-    parser.add_argument(
-        '--sync',
-        metavar='<remote>',
-        help='Sync with remote history. <remote> may be a hostname, a '
-        'history database file, or <hostname>:<histfile>.')
-    parser.add_argument('--histfile',
-                        metavar='<filename>',
-                        help='History file to use. Default: ' +
-                        DEFAULT_HISTFILE)
-    parser.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)
-    parser.add_argument(
-        '--import_hist',
-        action="store_true",
-        help='Import history from stdin in Unix timestamp + tab + cmd format '
-        '(HISTTIMEFORMAT="%%s%%t" history | hist.py --import)')
-    args = parser.parse_args(argv)
-    if args.all:
-        args.n = 0
-    if args.session == '.':
-        args.session = os.environ['HIST_SESSION_ID']
-    if args.dir == '.':
-        # Use logical $PWD from the shell, rather than physical one
-        # from os.getcwd()
-        args.dir = os.environ['PWD']
-    if args.hostname == '.':
-        args.hostname = socket.gethostname()
-    return args
-
-
 def create_table(conn):
     """
     Create the `hist` database table, but if it doesn't exist already.
@@ -239,6 +149,7 @@ def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
         row_str = b'\t'.join(str(f).encode('utf8') for f in row)
         rowid = hashlib.md5(row_str).hexdigest()[:16]
         conn.execute(INSERT, (rowid,) + row + (idx,))
+
 
 def to_int(s):
     """
@@ -317,14 +228,14 @@ def query(conn, args):
     group = 'GROUP BY cmd' if args.dedup else ''
     sql = ' '.join([select, table, where, group, order, limit])
     if args.chronological:
-        sql = ' '.join([select, '(', sql, ')',
-            'ORDER BY timestamp ASC, idx ASC'])
+        sql = ' '.join(
+            [select, '(', sql, ')', 'ORDER BY timestamp ASC, idx ASC'])
     #print(sql)
-    for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname,
-            status, idx) in conn.execute(sql, bindings):
+    for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname, status,
+         idx) in conn.execute(sql, bindings):
         timestamp = datetime.datetime.fromtimestamp(int(timestamp_str))
-        yield Entry(rowid ,session, pwd, timestamp, int(elapsed), cmd,
-            hostname, status, idx)
+        yield Entry(rowid, session, pwd, timestamp, int(elapsed), cmd, hostname,
+                    status, idx)
 
 
 def do_query(conn, args):
@@ -450,13 +361,128 @@ def serve(conn, args):
             send(out, '?')
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    query_group = parser.add_argument_group(
+        'query options',
+        'In queries, <like> is used with SQL LIKE, where % and _ '
+        'are wildcards.')
+    query_group.add_argument(
+        'cmd',
+        nargs='?',
+        metavar='<cmd>',
+        help='Search by command. This is a substring search, unless the '
+        '--exact flag is used. %% and _ are wildcards.')
+    query_group.add_argument(
+        '--session',
+        '-s',
+        metavar='<like>',
+        help='Search by session ID. Use "." for current session.')
+    query_group.add_argument(
+        '--dir',
+        '-d',
+        metavar='<like>',
+        help='Search by directory. Use "." for current working directory.')
+    query_group.add_argument(
+        '--elapsed',
+        '-e',
+        metavar='<int>|<op><int>',
+        help='Elapsed time. May use a string with an operator (e.g., "> 10")')
+    query_group.add_argument(
+        '--status',
+        '-x',
+        metavar='<int>|<op><int>',
+        help='Exit status. May use a string with an operator (e.g., "!= 0")')
+    query_group.add_argument('--hostname',
+                             '-H',
+                             metavar='<like>',
+                             help='Search by hostname. Use "." for localhost.')
+    query_group.add_argument('--exact',
+                             '-w',
+                             action='store_true',
+                             help='Use exact match for command')
+
+    fmt_group = parser.add_argument_group('output control')
+    fmt_group.add_argument('--all',
+                           '-a',
+                           action='store_true',
+                           help='Return all results.')
+    fmt_group.add_argument(
+        '-n',
+        type=int,
+        metavar='<int>',
+        default=30,
+        help='Number of results to return. Default=%(default)s.')
+    fmt_group.add_argument(
+        '--fmt',
+        '-f',
+        metavar='<fields>',
+        default='tc',
+        help='Format spec; a string of one-character field identifiers: '
+        'c=command, d=directory (home abbreviated ~), D=directory, e=elapsed, '
+        'h=hostname, i=id, s=session, t=timestamp, x=exit status. '
+        'Default is "%(default)s". '
+        'Use empty string for "{}".'.format(DEFAULT_FMT))
+    fmt_group.add_argument('--group',
+                           '-g',
+                           action='store_true',
+                           help='Group results by date.')
+    fmt_group.add_argument('--dedup',
+                           '-u',
+                           action='store_true',
+                           help='Deduplicate by command.')
+    fmt_group.add_argument('--chronological',
+                           '-r',
+                           action='store_true',
+                           help='Sort output chronologically')
+
+    other_group = parser.add_argument_group('other options')
+    other_group.add_argument('--histfile',
+                             metavar='<filename>',
+                             help='History file to use. Default: ' +
+                             DEFAULT_HISTFILE)
+    excl_group = other_group.add_mutually_exclusive_group()
+    excl_group.add_argument(
+        '--sync',
+        metavar='<remote>',
+        help='Sync with remote history. <remote> may be a hostname, a '
+        'history database file, or <hostname>:<histfile>. For remote '
+        'hosts, ssh is used and hist.py must be installed on the remote host.')
+    excl_group.add_argument('--serve',
+                            action='store_true',
+                            help=argparse.SUPPRESS)
+    excl_group.add_argument(
+        '--import_hist',
+        action="store_true",
+        help='Import history from stdin in Unix timestamp + tab + cmd format '
+        '(i.e., HISTTIMEFORMAT="%%s%%t" history | hist.py --import)')
+
+    args = parser.parse_args(argv)
+    if args.all:
+        args.n = 0
+    if args.session == '.':
+        args.session = os.environ['HIST_SESSION_ID']
+    if args.dir == '.':
+        # Use logical $PWD from the shell, rather than physical one
+        # from os.getcwd()
+        args.dir = os.environ['PWD']
+    if args.hostname == '.':
+        args.hostname = socket.gethostname()
+    return args
+
+
 def quiet_handler(signum, frame):
     sys.exit()
 
 
 def main():
     if hasattr(signal, "SIGPIPE"):
+        # Disable SIGPIPE handler so we don't get a traceback if the output
+        # is typed to something like `head`.
         signal.signal(signal.SIGPIPE, quiet_handler)
+
     args = parse_args()
     histfile = args.histfile or os.path.expanduser(DEFAULT_HISTFILE)
     conn = sqlite3.connect(os.path.expanduser(histfile))
