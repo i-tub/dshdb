@@ -7,6 +7,7 @@ from __future__ import print_function
 
 import argparse
 import collections
+import hashlib
 import json
 import operator
 import os
@@ -37,7 +38,7 @@ DEFAULT_FMT = 'thsdec'
 
 PY2 = sys.version_info.major < 3
 
-INSERT = 'INSERT INTO hist ({}) VALUES ({})'.format(
+INSERT = 'INSERT OR IGNORE INTO hist ({}) VALUES ({})'.format(
     ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
 
 
@@ -93,6 +94,10 @@ def parse_args():
         '-d',
         metavar='<like>',
         help='Search by directory. Use "." for current working directory.')
+    parser.add_argument('--elapsed',
+                        type=int,
+                        metavar='<int>',
+                        help='Elapsed time.')
     parser.add_argument(
         '--fmt',
         '-f',
@@ -143,55 +148,76 @@ def parse_args():
     parser.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)
     parser.add_argument(
         '--import_hist',
-        metavar="<histfile>",
+        action="store_true",
         help='Import history from stdin in Unix timestamp + tab + cmd format'
-        '(HISTTIMEFORMAT="%s%t" history | hist.py --import)')
+        '(HISTTIMEFORMAT="%%s%%t" history | hist.py --import)')
     args = parser.parse_args()
     if args.all:
         args.n = 0
-    if args.import_hist:
-        args.histfile = args.import_hist
+    if args.session == '.':
+        args.session = os.environ['HIST_SESSION_ID']
+    if args.dir == '.':
+        # Use logical $PWD from the shell, rather than physical one
+        # from os.getcwd()
+        args.dir = os.environ['PWD']
+    if args.hostname == '.':
+        args.hostname = socket.gethostname()
     return args
 
 
 def create_table(conn):
-    conn.execute('DROP TABLE IF EXISTS hist')
     cols = []
     for field in FIELDS:
         ftype = 'INTEGER' if field in INT_FIELDS else 'TEXT'
         cols.append('{} {} '.format(field, ftype))
-    conn.execute('CREATE TABLE hist ({})'.format(', '.join(cols)))
-    conn.execute('CREATE INDEX ts_idx ON hist (timestamp DESC)')
-    conn.execute('CREATE INDEX cmd_idx ON hist (cmd)')
-    conn.execute('CREATE INDEX session_idx ON hist (session)')
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS hist (id TEXT PRIMARY KEY, {})'.format(
+            ', '.join(cols)))
+    conn.execute('CREATE INDEX IF NOT EXISTS ts_idx ON hist (timestamp DESC)')
+    conn.execute('CREATE INDEX IF NOT EXISTS cmd_idx ON hist (cmd)')
+    conn.execute('CREATE INDEX IF NOT EXISTS session_idx ON hist (session)')
 
 
 def read_hist(fh):
+    prev_idx = -1
+    idx = 0
+    cmd = ''
+    timestamp = None
+    for line in fh:
+        m = re.match(r'\s*(\d)+\s+(\d+)\t(.*)', line)
+        if m:
+            idx = int(m.group(1))
+            if idx == prev_idx + 1:
+                if PY2:
+                    cmd = cmd.decode('utf8')
+                yield timestamp, cmd
+            prev_idx = idx
+            timestamp = int(m.group(2))
+            cmd = m.group(3)
+        else:
+            cmd += "\n" + line.rstrip('\n')
+    if idx > 0:
+        yield timestamp, cmd
+
+
+def insert_hist(conn, fh, session='', pwd='', elapsed=0):
     hostname = socket.gethostname()
-    for i, line in enumerate(fh, 1):
-        try:
-            idx_timestamp, cmd = line.split('\t', 1)
-            cmd = cmd.rstrip()
-            idx, timestamp_str = idx_timestamp.split()
-            raw_timestamp = int(timestamp_str)
-        except ValueError:
-            sys.exit('bad line {}: >>>{}<<<'.format(i, line))
-        if PY2:
-            cmd = cmd.decode('utf8')
-        yield Entry('', '', raw_timestamp, 0, cmd, hostname)
-
-
-def insert_hist(conn, fh):
-    for e in read_hist(fh):
-        conn.execute(
-            INSERT,
-            (e.session, e.pwd, e.timestamp, e.elapsed, e.cmd, e.hostname))
+    INSERT = 'INSERT OR IGNORE INTO hist (id, {}) VALUES (?, {})'.format(
+        ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
+    for timestamp, cmd in read_hist(fh):
+        row = (session, pwd, timestamp, elapsed, cmd, hostname)
+        row_str = str(row).encode('utf8')
+        rowid = hashlib.md5(row_str).hexdigest()[:16]
+        conn.execute(INSERT, (rowid,) + row)
 
 
 def import_hist(conn, args):
     with conn:
         create_table(conn)
-        insert_hist(conn, sys.stdin)
+        session = args.session or ''
+        pwd = args.dir or ''
+        elapsed = args.elapsed or 0
+        insert_hist(conn, sys.stdin, session, pwd, elapsed)
 
 
 def query(conn, args):
@@ -228,14 +254,6 @@ def query(conn, args):
 
 
 def do_query(conn, args):
-    if args.session == '.':
-        args.session = os.environ['HIST_SESSION_ID']
-    if args.dir == '.':
-        # Use logical $PWD from the shell, rather than physical one
-        # from os.getcwd()
-        args.dir = os.environ['PWD']
-    if args.hostname == '.':
-        args.hostname = socket.gethostname()
     printer = Printer(args.fmt, args.group)
 
     hist = query(conn, args)
