@@ -173,7 +173,7 @@ def parse_args(argv=None):
     parser.add_argument(
         '--import_hist',
         action="store_true",
-        help='Import history from stdin in Unix timestamp + tab + cmd format'
+        help='Import history from stdin in Unix timestamp + tab + cmd format '
         '(HISTTIMEFORMAT="%%s%%t" history | hist.py --import)')
     args = parser.parse_args(argv)
     if args.all:
@@ -205,7 +205,11 @@ def create_table(conn):
     conn.execute('CREATE INDEX IF NOT EXISTS session_idx ON hist (session)')
 
 
-def read_hist(fh):
+def parse_bash_history(fh):
+    """
+    Parse the output of `HISTTIMEFORMAT="%s%t" history`, yielding
+    (timestamp, cmd, idx) tuples.
+    """
     prev_idx = -1
     idx = 0
     cmd = ''
@@ -230,13 +234,16 @@ def read_hist(fh):
 
 
 def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
-    for timestamp, cmd, idx in read_hist(fh):
+    for timestamp, cmd, idx in parse_bash_history(fh):
         row = (session, pwd, timestamp, elapsed, cmd, hostname, status)
         row_str = b'\t'.join(str(f).encode('utf8') for f in row)
         rowid = hashlib.md5(row_str).hexdigest()[:16]
         conn.execute(INSERT, (rowid,) + row + (idx,))
 
 def to_int(s):
+    """
+    Convert string to int or 0 if invalid.
+    """
     try:
         return int(s)
     except (TypeError, ValueError):
@@ -255,6 +262,12 @@ def import_hist(conn, args):
 
 
 def parse_int_expr(expr):
+    """
+    Parse a string consisting of an int optionally preceded by a relational
+    operator.
+
+    :return: (operator, int_value). Both will be None if the string is invalid.
+    """
     try:
         val = int(expr)
     except (TypeError, ValueError):

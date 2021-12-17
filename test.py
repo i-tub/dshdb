@@ -9,9 +9,9 @@ import hist
 
 class TestHist(unittest.TestCase):
 
-    def test_read_hist(self):
+    def test_parse_bash_history(self):
         with open('htest') as fh:
-            got = list(hist.read_hist(fh))
+            got = list(hist.parse_bash_history(fh))
         expected = [
             (1639348558, 'cd hist', 99964),
             (1639348560, 'man bash', 99965),
