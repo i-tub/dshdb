@@ -1,6 +1,8 @@
 #!/bin/env python
 """
 Search or manipulate the distributed shell history database.
+
+For more information and updates, see https://github.com/i-tub/dshdb .
 """
 
 from __future__ import print_function
@@ -94,7 +96,8 @@ class Printer:
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cmd',
                         nargs='?',
                         metavar='<like>',

@@ -1,7 +1,11 @@
 #!/bin/bash
 
+# Distributed Shell History Database (dshdb)
+#
 # This script must be sourced to enable keeping track of history and computing
 # elapsed time.
+#
+# For more information and updates, see https://github.com/i-tub/dshdb .
 
 export HIST_SESSION_ID=$(python -c 'import uuid; print uuid.uuid4().hex[:16]')
 
