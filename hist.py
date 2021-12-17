@@ -1,5 +1,4 @@
 #!/bin/env python
-
 """
 Search or manipulate the distributed shell history database.
 """
@@ -20,10 +19,12 @@ import sys
 import datetime as dt
 
 DEFAULT_HISTFILE = '~/.hist.db'
-FIELDS = 'session, pwd, timestamp, elapsed, cmd, hostname'
+FIELDS = ['session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname']
+INT_FIELDS = {'timestamp', 'elapsed'}
 
 Entry = collections.namedtuple('Entry', FIELDS)
 
+# For use in --fmt argument.
 COLS = {
     's': 'session',
     'd': 'pwd',
@@ -32,6 +33,13 @@ COLS = {
     'c': 'cmd',
     'h': 'hostname',
 }
+DEFAULT_FMT = 'thsdec'
+
+PY2 = sys.version_info.major < 3
+
+INSERT = 'INSERT INTO hist ({}) VALUES ({})'.format(
+    ','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
+
 
 class Printer:
 
@@ -40,7 +48,7 @@ class Printer:
         self.group = group
         self.field_getters = []
 
-        for c in fmt or 'thsdec':
+        for c in fmt or DEFAULT_FMT:
             col = COLS.get(c)
             if not col:
                 continue
@@ -62,7 +70,7 @@ class Printer:
         fields = [g(entry) for g in self.field_getters]
         if self.group:
             fields.insert(0, '')
-        if sys.version_info[0] < 3:
+        if PY2:
             s = '\t'.join(map(unicode, fields))
             print(s.encode('utf8'))
         else:
@@ -91,8 +99,8 @@ def parse_args():
         metavar='<fields>',
         default='tc',
         help='Format spec; a string of one-character field identifiers: '
-           't=timestamp, h=hostname, s=session, d=pwd, e=elapsed, c=cmd. '
-           'Default is "%(default)s". Use blank for all.')
+        't=timestamp, h=hostname, s=session, d=pwd, e=elapsed, c=cmd. '
+        'Default is "%(default)s". Use empty string for all.')
     parser.add_argument('--all',
                         '-a',
                         action='store_true',
@@ -119,28 +127,75 @@ def parse_args():
                         '-w',
                         action='store_true',
                         help='Use exact match for command')
-    parser.add_argument('--hostname', '-H',
-        metavar='<like>',
-        help='Search by hostname. Use "." for localhost.')
-    parser.add_argument('--sync',
-                        metavar='<remote>',
+    parser.add_argument('--hostname',
+                        '-H',
+                        metavar='<like>',
+                        help='Search by hostname. Use "." for localhost.')
+    parser.add_argument(
+        '--sync',
+        metavar='<remote>',
         help='Sync with remote history. <remote> may be a hostname, a '
         'history database file, or <hostname>:<histfile>.')
     parser.add_argument('--histfile',
                         metavar='<filename>',
-                        help='History file to use. Default: '
-                        + DEFAULT_HISTFILE)
-    parser.add_argument('--serve',
-                        action='store_true',
-                        help=argparse.SUPPRESS)
+                        help='History file to use. Default: ' +
+                        DEFAULT_HISTFILE)
+    parser.add_argument('--serve', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument(
+        '--import_hist',
+        metavar="<histfile>",
+        help='Import history from stdin in Unix timestamp + tab + cmd format'
+        '(HISTTIMEFORMAT="%s%t" history | hist.py --import)')
     args = parser.parse_args()
     if args.all:
         args.n = 0
+    if args.import_hist:
+        args.histfile = args.import_hist
     return args
 
 
+def create_table(conn):
+    conn.execute('DROP TABLE IF EXISTS hist')
+    cols = []
+    for field in FIELDS:
+        ftype = 'INTEGER' if field in INT_FIELDS else 'TEXT'
+        cols.append('{} {} '.format(field, ftype))
+    conn.execute('CREATE TABLE hist ({})'.format(', '.join(cols)))
+    conn.execute('CREATE INDEX ts_idx ON hist (timestamp DESC)')
+    conn.execute('CREATE INDEX cmd_idx ON hist (cmd)')
+    conn.execute('CREATE INDEX session_idx ON hist (session)')
+
+
+def read_hist(fh):
+    hostname = socket.gethostname()
+    for i, line in enumerate(fh, 1):
+        try:
+            idx_timestamp, cmd = line.split('\t', 1)
+            cmd = cmd.rstrip()
+            idx, timestamp_str = idx_timestamp.split()
+            raw_timestamp = int(timestamp_str)
+        except ValueError:
+            sys.exit('bad line {}: >>>{}<<<'.format(i, line))
+        if PY2:
+            cmd = cmd.decode('utf8')
+        yield Entry('', '', raw_timestamp, 0, cmd, hostname)
+
+
+def insert_hist(conn, fh):
+    for e in read_hist(fh):
+        conn.execute(
+            INSERT,
+            (e.session, e.pwd, e.timestamp, e.elapsed, e.cmd, e.hostname))
+
+
+def import_hist(conn, args):
+    with conn:
+        create_table(conn)
+        insert_hist(conn, sys.stdin)
+
+
 def query(conn, args):
-    select = 'SELECT {} FROM'.format(FIELDS)
+    select = 'SELECT {} FROM'.format(','.join(FIELDS))
     table = 'hist'
     wheres = []
     bindings = []
@@ -187,8 +242,9 @@ def do_query(conn, args):
     for entry in hist:
         printer.print(entry)
 
+
 def send(fh, msg):
-    json.dump(msg, fh);
+    json.dump(msg, fh)
     fh.write('\n')
     fh.flush()
 
@@ -218,7 +274,11 @@ def sync(conn, args):
         cmd += ['--histfile', histfile]
     if hostname:
         cmd = ['ssh', hostname] + cmd
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stdin=subprocess.PIPE)
+    enc = {} if PY2 else {'encoding': 'utf8'}
+    p = subprocess.Popen(cmd,
+                         stdout=subprocess.PIPE,
+                         stdin=subprocess.PIPE,
+                         **enc)
     inp = p.stdout
     out = p.stdin
 
@@ -237,10 +297,13 @@ def sync(conn, args):
     send_entries(conn, out, remote_timestamps)
 
     send(out, ["BYE", {}])
-    
+    p.wait()
+    inp.close()
+    out.close()
+
 
 def get_newer_entries(conn, timestamps):
-    select = 'SELECT {} FROM hist'.format(FIELDS)
+    select = 'SELECT {} FROM hist'.format(','.join(FIELDS))
     wheres = []
     bindings = []
     for hostname, timestamp in timestamps.items():
@@ -265,22 +328,20 @@ def recv_entries(conn, inp):
     msg = recv(inp)
     assert msg == 'BEGIN'
     n = 0
-    qs = ','.join(['?'] * len(FIELDS.split()))
-    sql = 'INSERT INTO hist ({}) VALUES ({})'.format(FIELDS, qs)
     with conn:
         while True:
             msg = recv(inp)
             if msg == 'END':
                 break
             n += 1
-            conn.execute(sql, msg)
+            conn.execute(INSERT, msg)
     print(n, 'rows transmitted', file=sys.stderr)
 
 
 def serve(conn, args):
     out = sys.stdout
     inp = sys.stdin
-    send(out, 'READY')    
+    send(out, 'READY')
     while True:
         cmd, msg = recv(inp)
         if cmd == 'BYE':
@@ -311,6 +372,8 @@ def main():
         action = sync
     elif args.serve:
         action = serve
+    elif args.import_hist:
+        action = import_hist
     else:
         action = do_query
 
