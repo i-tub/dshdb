@@ -16,7 +16,7 @@ case ":$PATH:" in
     *) export PATH="$HIST_DIR:$PATH" ;;
 esac
 
-export HIST_SESSION_ID=$(python -c 'import sys; sys.path.pop(0); import uuid; print uuid.uuid4().hex[:16]')
+export HIST_SESSION_ID=$(python -c 'from __future__ import print_function; import sys; sys.path.pop(0); import uuid; print(uuid.uuid4().hex[:16])')
 
 __hist_in_cmd=0
 
