@@ -129,12 +129,12 @@ def create_table(conn):
         'CREATE TABLE IF NOT EXISTS {} (id TEXT PRIMARY KEY, {})'.format(
             TABLE_NAME, ', '.join(cols)))
     conn.execute(
-        'CREATE INDEX IF NOT EXISTS ts_idx ON {} (timestamp DESC)'.format(
+        'CREATE INDEX IF NOT EXISTS {0}_ts_idx ON {0} (timestamp DESC)'.format(
             TABLE_NAME))
     conn.execute(
-        'CREATE INDEX IF NOT EXISTS cmd_idx ON {} (cmd)'.format(TABLE_NAME))
+        'CREATE INDEX IF NOT EXISTS {0}_cmd_idx ON {0} (cmd)'.format(TABLE_NAME))
     conn.execute(
-        'CREATE INDEX IF NOT EXISTS session_idx ON {} (session)'.format(
+        'CREATE INDEX IF NOT EXISTS {0}_session_idx ON {0} (session)'.format(
             TABLE_NAME))
 
 
@@ -400,7 +400,7 @@ def get_newer_entries(conn, timestamps):
 
     :yield: newer history entry tuples for insertion into database
     """
-    select = 'SELECT {} FROM {}'.format(TABLE_NAME, ','.join(FIELDS))
+    select = 'SELECT {} FROM {}'.format(','.join(FIELDS), TABLE_NAME)
     wheres = []
     bindings = []
     for hostname, timestamp in timestamps.items():
