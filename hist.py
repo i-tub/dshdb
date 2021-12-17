@@ -21,9 +21,10 @@ import datetime as dt
 
 DEFAULT_HISTFILE = '~/.hist.db'
 FIELDS = [
-    'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname', 'status'
+    'id', 'session', 'pwd', 'timestamp', 'elapsed', 'cmd', 'hostname',
+    'status', 'idx'
 ]
-INT_FIELDS = {'timestamp', 'elapsed', 'status'}
+INT_FIELDS = {'timestamp', 'elapsed', 'status', 'idx'}
 
 Entry = collections.namedtuple('Entry', FIELDS)
 
@@ -183,7 +184,7 @@ def parse_args(argv=None):
 
 def create_table(conn):
     cols = []
-    for field in FIELDS:
+    for field in FIELDS[1:]:
         ftype = 'INTEGER' if field in INT_FIELDS else 'TEXT'
         cols.append('{} {} '.format(field, ftype))
     conn.execute(
@@ -206,7 +207,7 @@ def read_hist(fh):
             if idx == prev_idx + 1:
                 if PY2:
                     cmd = cmd.decode('utf8')
-                yield timestamp, cmd
+                yield timestamp, cmd, prev_idx
             prev_idx = idx
             timestamp = int(m.group(2))
             cmd = m.group(3)
@@ -215,17 +216,20 @@ def read_hist(fh):
     if idx > 0:
         if PY2:
             cmd = cmd.decode('utf8')
-        yield timestamp, cmd
+        yield timestamp, cmd, prev_idx
 
 
 def insert_hist(conn, fh, session='', pwd='', elapsed=0, hostname='', status=0):
     #INSERT = 'INSERT OR IGNORE INTO hist (id, {}) VALUES (?, {})'.format(
         #','.join(FIELDS), ','.join(['?'] * len(FIELDS)))
-    for timestamp, cmd in read_hist(fh):
+    for timestamp, cmd, idx in read_hist(fh):
         row = (session, pwd, timestamp, elapsed, cmd, hostname, status)
-        row_str = str(row).encode('utf8')
+        # XXX
+        #row_str = str(row).encode('utf8')
+        row_str = b'\t'.join(str(f).encode('utf8') for f in row)
+        #print('---', row_str)
         rowid = hashlib.md5(row_str).hexdigest()[:16]
-        conn.execute(INSERT, (rowid,) + row)
+        conn.execute(INSERT, (rowid,) + row + (idx,))
 
 def to_int(s):
     try:
@@ -290,18 +294,19 @@ def query(conn, args):
     where = ''
     if wheres:
         where = 'WHERE ' + ' AND '.join(wheres)
-    order = 'ORDER BY timestamp DESC'
+    order = 'ORDER BY timestamp DESC, idx DESC'
     limit = 'LIMIT {}'.format(args.n) if args.n > 0 else ''
     group = 'GROUP BY cmd' if args.dedup else ''
     sql = ' '.join([select, table, where, group, order, limit])
     if args.chronological:
-        sql = ' '.join([select, '(', sql, ')', 'ORDER BY timestamp ASC'])
+        sql = ' '.join([select, '(', sql, ')',
+            'ORDER BY timestamp ASC, idx ASC'])
     #print(sql)
-    for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname, status) \
-            in conn.execute(sql, bindings):
+    for (rowid, session, pwd, timestamp_str, elapsed, cmd, hostname,
+            status, idx) in conn.execute(sql, bindings):
         timestamp = dt.datetime.fromtimestamp(int(timestamp_str))
         yield Entry(rowid ,session, pwd, timestamp, int(elapsed), cmd,
-            hostname, status)
+            hostname, status, idx)
 
 
 def do_query(conn, args):

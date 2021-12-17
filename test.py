@@ -1,6 +1,5 @@
 # coding=utf-8
 import datetime
-import socket
 import sqlite3
 import unittest
 
@@ -13,12 +12,12 @@ class TestHist(unittest.TestCase):
         with open('htest') as fh:
             got = list(hist.read_hist(fh))
         expected = [
-            (1639348558, 'cd hist'),
-            (1639348560, 'man bash'),
-            (1639350379, ''),
-            (1639350393, u'echo 😸'),
-            (1639350393, 'echo "a\nb"'),
-            (1639350393, 'echo 3'),
+            (1639348558, 'cd hist', 99964),
+            (1639348560, 'man bash', 99965),
+            (1639350379, '', 99966),
+            (1639350393, u'echo 😸', 99967),
+            (1639350393, 'echo "a\nb"', 99968),
+            (1639350393, 'echo 3', 99969),
         ]
         self.assertEqual(got, expected)
 
@@ -31,12 +30,15 @@ class TestHist(unittest.TestCase):
             hist.insert_hist(conn, fh)
         got = list(hist.query(conn, args))
         expected = [
-            hist.Entry(session='',
+            hist.Entry(id='d5562323aa17e468',
+                       session='',
                        pwd='',
                        timestamp=datetime.datetime(2021, 12, 12, 17, 35, 58),
                        elapsed=0,
                        cmd='cd hist',
-                       hostname=socket.gethostname())
+                       hostname='',
+                       status=0,
+                       idx=99964,)
         ]
         self.assertEqual(got, expected)
 
