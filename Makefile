@@ -22,4 +22,4 @@ install:
 shell:
 	@echo Entering shell with \$$HIST_DIR=$(PWD)
 	@cp $(HIST_DIR)/hist.db .
-	@HIST_DIR=${PWD} bash
+	@HIST_DIR=${PWD} HIST_DEBUG=1 bash

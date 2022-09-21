@@ -16,7 +16,7 @@ case ":$PATH:" in
     *) export PATH="$HIST_DIR:$PATH" ;;
 esac
 
-export HIST_SESSION_ID=$(python -c 'from __future__ import print_function; import sys; sys.path.pop(0); import uuid; print(uuid.uuid4().hex[:16])')
+export HIST_SESSION_ID=$(python3 -c 'from __future__ import print_function; import sys; sys.path.pop(0); import uuid; print(uuid.uuid4().hex[:16])')
 
 __hist_in_cmd=0
 
@@ -47,6 +47,7 @@ function hist_precmd() {
     else
         hist_elapsed=0
     fi
+    hist_status=${status#0}
     __hist_in_cmd=0
     VISUAL=vimwrap
 }

@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/bin/env python3
 """
 Search or manipulate the Distributed Shell History Database.
 
@@ -117,6 +117,8 @@ def contractuser(dirname):
     """
     if dirname.startswith(HOME):
         return '~' + dirname[len(HOME):]
+    else:
+        return dirname
 
 
 def create_table(conn):
